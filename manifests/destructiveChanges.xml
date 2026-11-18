@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Manual destructive changes, applied on a full deploy only. -->
+<!-- For delta deployments, deletions are detected automatically by sfdx-git-delta. -->
+<!-- Add metadata members here only when you need to delete something that -->
+<!-- cannot be expressed as a source file removal. -->
+<Package xmlns="http://soap.sforce.com/2006/04/metadata">
+    <!-- Example:
+    <types>
+        <members>MyOldClass</members>
+        <name>ApexClass</name>
+    </types>
+    -->
+    <version>62.0</version>
+</Package>

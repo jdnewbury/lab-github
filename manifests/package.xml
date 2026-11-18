@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Package xmlns="http://soap.sforce.com/2006/04/metadata">
+    <types>
+        <members>LabLegacyFormatter</members>
+        <members>LabLegacyFormatterTest</members>
+        <members>LabOrderService</members>
+        <members>LabOrderServiceTest</members>
+        <members>LabOrderTriggerTest</members>
+        <name>ApexClass</name>
+    </types>
+    <types>
+        <members>LabOrderTrigger</members>
+        <name>ApexTrigger</name>
+    </types>
+    <types>
+        <members>Lab_Order__c.Amount__c</members>
+        <members>Lab_Order__c.Approved_Date__c</members>
+        <members>Lab_Order__c.Discount__c</members>
+        <members>Lab_Order__c.Status__c</members>
+        <name>CustomField</name>
+    </types>
+    <types>
+        <members>Lab_Order__c</members>
+        <name>CustomObject</name>
+    </types>
+    <types>
+        <members>Lab_Order_Approved_Date</members>
+        <name>Flow</name>
+    </types>
+    <types>
+        <members>Lab_Order_Access</members>
+        <name>PermissionSet</name>
+    </types>
+    <version>62.0</version>
+</Package>

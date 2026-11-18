@@ -1,0 +1,173 @@
+name: Salesforce CI/CD
+on:
+  push:
+    branches:
+      - '**'
+  # Validates a feature branch in a scratch org. Drafts wait until they are ready for review.
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: write  # required to push deployed/<env> git tags
+
+# One run at a time per branch, so two pushes never deploy, roll back or move the tag together.
+# Pull request runs have their own group, so one never waits for or cancels a deploy.
+concurrency:
+  group: deploy-${{ github.workflow }}-${{ github.event_name }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history required for sfdx-git-delta
+
+      - name: Check branch
+        id: route
+        run: |
+          set -euo pipefail
+          BRANCH="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
+          FEATURE_PATTERN=$(jq -r '.branchingModel.feature' ci-config.json)
+          CHECK_ONLY=$(jq -r '.deployOptions.checkOnlyOnFeature' ci-config.json)
+          ENV_ALIAS=$(jq -r --arg BRANCH "$BRANCH" '.branchingModel.environments[] | select(.branch==$BRANCH).orgAlias' ci-config.json)
+          if [ "${GITHUB_EVENT_NAME:-}" = "pull_request" ]; then
+            if [[ "$BRANCH" == ${FEATURE_PATTERN} && "$CHECK_ONLY" = "true" ]]; then
+              RUN_PIPELINE=true
+            else
+              RUN_PIPELINE=false
+              echo "A pull or merge request from $BRANCH, which is not a validated feature branch. Pushes deploy. Skipping before any install." >&2
+            fi
+          elif [[ "$BRANCH" == ${FEATURE_PATTERN} && "$CHECK_ONLY" = "true" ]] || [ -n "$ENV_ALIAS" ]; then
+            RUN_PIPELINE=true
+          else
+            RUN_PIPELINE=false
+            echo "No matched environment for branch $BRANCH. Skipping before any install." >&2
+          fi
+          echo "run=$RUN_PIPELINE" >> "$GITHUB_OUTPUT"
+
+      # The pinned CLI and the sgd plugin live in ~/sf-cli. No login is stored there.
+      - name: Cache Salesforce CLI
+        id: sf-cache
+        if: steps.route.outputs.run == 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/sf-cli
+          key: sf-cli-2.154.4-sgd-6.45.1-${{ runner.os }}
+
+      - name: Setup Salesforce CLI and tools
+        if: steps.route.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          # jq ships with ubuntu-latest. The CLI and sgd install only when the cache misses.
+          export SF_DATA_DIR="$HOME/sf-cli/data"
+          export PATH="$HOME/sf-cli/bin:$PATH"
+          echo "SF_DATA_DIR=$SF_DATA_DIR" >> "$GITHUB_ENV"
+          echo "$HOME/sf-cli/bin" >> "$GITHUB_PATH"
+          if [ "${{ steps.sf-cache.outputs.cache-hit }}" != "true" ]; then
+            npm install --global --prefix "$HOME/sf-cli" @salesforce/cli@2.154.4
+            echo y | sf plugins install sfdx-git-delta@6.45.1
+          fi
+
+      - name: Deploy
+        if: steps.route.outputs.run == 'true'
+        env:
+          DEV_AUTH_URL: ${{ secrets.DEV_AUTH_URL }}
+          SFDD_AUTH_URL: ${{ secrets.SFDD_AUTH_URL }}
+          DEVHUB_AUTH_URL: ${{ secrets.DEVHUB_AUTH_URL }}
+        run: |
+          set -euo pipefail
+          BRANCH="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
+          CHANGE_REQUEST=false
+          if [ "${GITHUB_EVENT_NAME:-}" = "pull_request" ]; then CHANGE_REQUEST=true; fi
+          rm -f .scratch-org
+          CONFIG=$(cat ci-config.json)
+          ENV_ALIAS=$(echo "$CONFIG" | jq -r --arg BRANCH "$BRANCH" \
+            '.branchingModel.environments[] | select(.branch==$BRANCH).orgAlias')
+          CHECK_ONLY=$(echo "$CONFIG" | jq -r '.deployOptions.checkOnlyOnFeature')
+          RUN_TESTS=$(echo "$CONFIG" | jq -r '.testOptions.runAllTests')
+          SOURCE_DIR=$(echo "$CONFIG" | jq -r '.deployOptions.sourceDir // "force-app"')
+          FEATURE_PATTERN=$(echo "$CONFIG" | jq -r '.branchingModel.feature')
+
+          if [ "$CHANGE_REQUEST" = "true" ]; then
+            echo "Validating $BRANCH in a new scratch org. It is deleted when the job ends."
+            if [ -z "${DEVHUB_AUTH_URL:-}" ]; then
+              echo "ERROR: the DEVHUB_AUTH_URL secret is not set. Add the Dev Hub's auth URL as a secret. A pull request from a fork gets no secrets."
+              exit 1
+            fi
+            if [ ! -f config/project-scratch-def.json ]; then
+              echo "ERROR: config/project-scratch-def.json is missing. The scratch org is created from it."
+              exit 1
+            fi
+            sf org login sfdx-url --sfdx-url-file <(echo "${DEVHUB_AUTH_URL}") --alias ci-devhub
+            # The CLI's own connected app signs in to the new org, as its error C-1016 advises.
+            export SF_SCRATCH_SIGNUP_CONNECTED_APP=PlatformCLI
+            export SF_SCRATCH_SIGNUP_CALLBACK_URL=http://localhost:1717/OauthRedirect
+            # Written before the create, so the delete hook reports a create that did not finish.
+            : > .scratch-org
+            sf org create scratch --target-dev-hub ci-devhub --definition-file config/project-scratch-def.json --alias ci-scratch --duration-days 1 --wait 10
+            sf org display --target-org ci-scratch --json | jq -r '.result.username' > .scratch-org
+            # The whole source: a new org has none of it, so a delta would miss its dependencies.
+            sf project deploy start --source-dir "$SOURCE_DIR" --target-org ci-scratch --wait 15
+            sf apex run test --target-org ci-scratch --test-level RunLocalTests --code-coverage --result-format junit --output-dir test-results --wait 15
+
+          elif [[ "$BRANCH" == ${FEATURE_PATTERN} ]] && [ "$CHECK_ONLY" = "true" ]; then
+            echo "Validation only (check-only against Dev) — open a pull request targeting dev to merge"
+            DEV_ALIAS=$(echo "$CONFIG" | jq -r '.branchingModel.environments[0].orgAlias')
+            DEV_AUTH_VAR="${DEV_ALIAS^^}_AUTH_URL"
+            sf org login sfdx-url --sfdx-url-file <(echo "${!DEV_AUTH_VAR}") --alias "$DEV_ALIAS"
+            sf project deploy start --manifest manifests/package.xml --target-org "$DEV_ALIAS" --dry-run
+
+          elif [ -n "$ENV_ALIAS" ]; then
+            echo "Deploying to $ENV_ALIAS"
+            AUTH_VAR="${ENV_ALIAS^^}_AUTH_URL"
+            sf org login sfdx-url --sfdx-url-file <(echo "${!AUTH_VAR}") --alias "$ENV_ALIAS"
+
+            if ! bash scripts/delta-deploy.sh "$ENV_ALIAS" "$SOURCE_DIR"; then
+              echo "Deployment failed — initiating rollback"
+              bash scripts/rollback.sh "$ENV_ALIAS"
+              exit 1
+            fi
+
+            if [ "$RUN_TESTS" = "true" ]; then
+              if ! bash scripts/run-tests.sh "$ENV_ALIAS"; then
+                echo "Tests failed — initiating rollback"
+                bash scripts/rollback.sh "$ENV_ALIAS"
+                exit 1
+              fi
+            fi
+
+            # Tag the release only now, after the tests, so a rolled-back release is sent again.
+            git tag -f "deployed/$ENV_ALIAS" HEAD
+            if ! git push origin "deployed/$ENV_ALIAS" --force; then
+              echo "ERROR: $ENV_ALIAS is deployed, but its deployed/ tag could not be pushed."
+              echo "Give this job permission to push tags, or the next run compares against the wrong commit."
+              exit 1
+            fi
+          else
+            echo "No matched environment for branch $BRANCH — skipping"
+          fi
+
+      - name: Publish test results
+        if: always() && steps.route.outputs.run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: apex-test-results
+          path: test-results/
+          if-no-files-found: ignore
+
+      - name: Delete scratch org
+        if: always() && github.event_name == 'pull_request'
+        run: |
+          if [ -f .scratch-org ]; then
+            SCRATCH_USER=$(cat .scratch-org)
+            rm -f .scratch-org
+            if [ -z "$SCRATCH_USER" ]; then
+              echo "WARNING: the scratch org create did not finish, so no org is recorded to delete. One created late expires in 1 day."
+            elif ! sf org delete scratch --target-org "$SCRATCH_USER" --no-prompt; then
+              echo "WARNING: scratch org $SCRATCH_USER was not deleted. It expires in 1 day, or delete it from the Dev Hub's Active Scratch Orgs."
+            fi
+          fi

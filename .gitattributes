@@ -1,0 +1,4 @@
+# Bash reads a carriage return as part of each command, so these stay LF on every checkout.
+*.sh text eol=lf
+*.yml text eol=lf
+Jenkinsfile text eol=lf

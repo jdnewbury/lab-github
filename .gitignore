@@ -1,0 +1,6 @@
+.sf/
+.sfdx/
+delta/
+node_modules/
+.vscode/
+backups/
