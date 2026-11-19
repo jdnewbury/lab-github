@@ -6,13 +6,13 @@
       {
         "name": "Dev",
         "branch": "dev",
-        "orgAlias": "dev",
+        "orgAlias": "cicd_dev",
         "orgType": "developer"
       },
       {
         "name": "Production",
         "branch": "main",
-        "orgAlias": "SFDD",
+        "orgAlias": "cicd_prod",
         "orgType": "production"
       }
     ]
@@ -26,6 +26,6 @@
   "testOptions": {
     "runAllTests": true,
     "testLevel": "RunLocalTests",
-    "gateAlias": "SFDD"
+    "gateAlias": "cicd_prod"
   }
 }

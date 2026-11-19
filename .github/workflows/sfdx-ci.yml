@@ -75,8 +75,8 @@ jobs:
       - name: Deploy
         if: steps.route.outputs.run == 'true'
         env:
-          DEV_AUTH_URL: ${{ secrets.DEV_AUTH_URL }}
-          SFDD_AUTH_URL: ${{ secrets.SFDD_AUTH_URL }}
+          CICD_DEV_AUTH_URL: ${{ secrets.CICD_DEV_AUTH_URL }}
+          CICD_PROD_AUTH_URL: ${{ secrets.CICD_PROD_AUTH_URL }}
           DEVHUB_AUTH_URL: ${{ secrets.DEVHUB_AUTH_URL }}
         run: |
           set -euo pipefail

@@ -17,7 +17,7 @@ fi
 # APPLY_DELETIONS is deployOptions.destructiveChanges. GATE_ALIAS is
 # testOptions.gateAlias: the one environment deployed with local tests.
 APPLY_DELETIONS="true"
-GATE_ALIAS="SFDD"
+GATE_ALIAS="cicd_prod"
 if command -v jq >/dev/null 2>&1 && [ -f ci-config.json ]; then
   APPLY_DELETIONS=$(jq -r '.deployOptions.destructiveChanges == true' ci-config.json)
   GATE_ALIAS=$(jq -r '.testOptions.gateAlias // ""' ci-config.json)
