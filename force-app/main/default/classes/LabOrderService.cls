@@ -1,5 +1,6 @@
 public with sharing class LabOrderService {
     public static final String STATUS_DRAFT = 'Draft';
+    public static final String STATUS_APPROVED = 'Approved';
 
     public static void applyDefaults(List<Lab_Order__c> orders) {
         for (Lab_Order__c order : orders) {
